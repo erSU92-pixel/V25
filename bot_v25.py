@@ -22,11 +22,13 @@ import pytz
 import requests
 import pandas as pd
 import yfinance as yf
+import websocket
 import yaml
 
-# Suppress matplotlib warnings
+# Suppress matplotlib & font warnings
 warnings.filterwarnings("ignore", message="Failed to extract font properties")
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+warnings.filterwarnings("ignore", module="matplotlib.font_manager")
 
 # ==============================================================================
 # 1. DEFAULT CONFIGURATION
@@ -58,10 +60,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "timeout": 6
         },
         "yahoo": {
-            "enabled": True,
+            "enabled": False,
             "symbol": "GC=F",
             "period": "2d",
-            "interval": "15m"
+            "interval": "15m",
+            "offset": -46.50
         }
     },
     "risk_management": {
@@ -124,7 +127,7 @@ def load_config() -> Dict[str, Any]:
                 yml_cfg = yaml.safe_load(f) or {}
             cfg = deep_merge(cfg, yml_cfg)
         except Exception as e:
-            print(f"️ Gagal baca config.yml: {e}. Menggunakan default.")
+            print(f"⚠️ Gagal baca config.yml: {e}. Menggunakan default.")
     
     env_map = {
         "TELEGRAM_BOT_TOKEN": ("telegram", "token"),
@@ -226,16 +229,22 @@ def save_json(p: str, d: Any) -> None:
         log.error(f"Error save {p}: {e}")
 
 # ==============================================================================
-# 5. DATA FETCHING (HTTP REST API - ANTI BLOCK)
+# 5. DATA FETCHING
 # ==============================================================================
 def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFrame], Optional[float]]:
-    """Ambil candle dari Deriv menggunakan HTTP REST API (Anti-Cloudflare Block)."""
     ds = CFG["data_sources"]["deriv"]
     if not ds["enabled"]:
         return None, None
     
-    url = "https://api.deriv.com/api/v3"
+    url = f"wss://ws.derivws.com/websockets/v3?app_id={CFG['bot']['deriv_app_id']}"
     req_id = int(time.time() * 1000)
+    
+    headers = [
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Origin: https://app.deriv.com",
+        "Pragma: no-cache",
+        "Cache-Control: no-cache"
+    ]
     
     payload = {
         "ticks_history": CFG["bot"]["symbol"],
@@ -243,36 +252,37 @@ def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFram
         "end": "latest",
         "granularity": gran,
         "style": "candles",
-        "req_id": req_id,
-        "app_id": int(CFG["bot"]["deriv_app_id"])
+        "req_id": req_id
     }
     
     for attempt in range(ds["max_retries"]):
+        ws = None
         try:
-            response = requests.post(url, json=payload, timeout=ds["timeout"])
-            response.raise_for_status()
-            res = response.json()
+            ws = websocket.create_connection(url, timeout=ds["timeout"], header=headers)
+            ws.send(json.dumps(payload))
             
-            if "error" in res:
-                log.warning(f"Deriv API Error: {res['error'].get('message', 'Unknown')}")
-                time.sleep(2 ** attempt)
-                continue
-                
-            if "candles" in res:
-                df = pd.DataFrame(res["candles"])
-                for c in ["close", "high", "low", "open"]:
-                    df[c] = pd.to_numeric(df[c], errors='coerce').astype(float)
-                if "volume" not in df.columns:
-                    df["volume"] = 0.0
-                else:
-                    df["volume"] = pd.to_numeric(df["volume"], errors='coerce').fillna(0.0)
-                return df, float(df["close"].iloc[-1])
-                
-        except requests.exceptions.RequestException as e:
-            log.warning(f"Deriv HTTP attempt {attempt+1}/{ds['max_retries']} gagal: {e}")
-            time.sleep(2 ** attempt)
+            for _ in range(15):
+                res = json.loads(ws.recv())
+                if res.get("req_id") == req_id and "candles" in res:
+                    df = pd.DataFrame(res["candles"])
+                    for c in ["close", "high", "low", "open"]:
+                        df[c] = pd.to_numeric(df[c], errors='coerce').astype(float)
+                    if "volume" not in df.columns:
+                        df["volume"] = 0.0
+                    else:
+                        df["volume"] = pd.to_numeric(df["volume"], errors='coerce').fillna(0.0)
+                    ws.close()
+                    return df, float(df["close"].iloc[-1])
+            
+            if ws:
+                ws.close()
         except Exception as e:
-            log.warning(f"Deriv unexpected error: {e}")
+            log.warning(f"Deriv WS attempt {attempt+1}/{ds['max_retries']} gagal: {e}")
+            if ws:
+                try:
+                    ws.close()
+                except:
+                    pass
             time.sleep(2 ** attempt)
     return None, None
 
@@ -315,17 +325,29 @@ def fetch_yf_gc() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
 
 def get_multi_source_price() -> Tuple[float, pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, float]]:
     prices: Dict[str, float] = {}
+    
+    # 1. Deriv
     df_m15, p_deriv = fetch_deriv(CFG["data_sources"]["deriv"]["candle_limit_m15"], 900)
     if p_deriv:
         prices["Deriv M15"] = p_deriv
     
+    # 2. Binance
     p_binance = fetch_binance_paxg()
     if p_binance:
         prices["Binance PAXG"] = p_binance
     
+    # 3. Yahoo Finance (Dengan Per-Source Offset)
     df_yf, p_yf = fetch_yf_gc()
     if p_yf:
-        prices["Yahoo GC=F"] = p_yf
+        yf_offset = float(CFG["data_sources"]["yahoo"].get("offset", 0.0))
+        p_yf_adjusted = p_yf + yf_offset
+        prices["Yahoo GC=F"] = p_yf_adjusted
+        
+        if yf_offset != 0.0 and df_yf is not None:
+            for col in ["close", "high", "low", "open"]:
+                if col in df_yf.columns:
+                    df_yf[col] = df_yf[col] + yf_offset
+                    
         if df_m15 is None:
             df_m15 = df_yf
     
@@ -340,10 +362,10 @@ def get_multi_source_price() -> Tuple[float, pd.DataFrame, pd.DataFrame, pd.Data
         valid_prices = prices
     
     raw_price = float(statistics.median(list(valid_prices.values())))
-    offset = float(CFG["bot"]["mt5_offset"])
-    final_price = raw_price + offset
+    global_offset = float(CFG["bot"]["mt5_offset"])
+    final_price = raw_price + global_offset
     
-    log.info(f"Harga: {valid_prices} | Median: {raw_price:.2f} | Offset: {offset:+.2f} | Final: {final_price:.2f}")
+    log.info(f"Harga: {valid_prices} | Median: {raw_price:.2f} | Global Offset: {global_offset:+.2f} | Final: {final_price:.2f}")
     
     ds = CFG["data_sources"]["deriv"]
     df_h1, _ = fetch_deriv(ds["candle_limit_h1"], 3600)
@@ -545,7 +567,7 @@ def main() -> int:
         log.info(f"  Telegram: {'✅' if CFG['telegram']['token'] else '❌'}")
         return 0
     
-    log.info("🚀 V25.0 ULTIMATE START")
+    log.info(" V25.0 ULTIMATE START")
     dna = load_json(CFG["paths"]["dna_file"], {"engines": {}})
     journal = load_json(CFG["paths"]["journal_file"], [])
     
@@ -553,7 +575,7 @@ def main() -> int:
         price, df_m15, df_h1, df_h4, sources = get_multi_source_price()
     except Exception as e:
         log.error(f"Gagal mengambil harga: {e}")
-        send_text(f" <b>CRITICAL ERROR</b>\nGagal mengambil data harga:\n{e}")
+        send_text(f"🛑 <b>CRITICAL ERROR</b>\nGagal mengambil data harga:\n{e}")
         return 1
     
     engine_map = [
@@ -667,18 +689,18 @@ def main() -> int:
     session_info = "🔥 London/NY Overlap" if is_active else "🌙 Asian Session"
     
     caption = (
-        f" <b>V25.0 ULTIMATE - {signal} ({consensus:.0f}%)</b>\n"
+        f"💎 <b>V25.0 ULTIMATE - {signal} ({consensus:.0f}%)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>Sumber Harga:</b>\n{sumber_text}\n"
         f"🎯 <b>Adjusted Price:</b> {price:.2f} {offset_info}\n"
-        f" <b>Sesi:</b> {session_info} | ATR: {atr_m15:.2f}\n"
+        f"🕒 <b>Sesi:</b> {session_info} | ATR: {atr_m15:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>Entry:</b> <code>{entry:.2f}</code>\n"
-        f" <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
+        f"🔴 <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
         f"🟩 <b>TP1:</b> <code>{t1:.2f}</code> | <b>TP2:</b> <code>{t2:.2f}</code>\n"
         f"🟩 <b>TP3:</b> <code>{t3:.2f}</code> | <b>TP4:</b> <code>{t4:.2f}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{' DRY-RUN MODE | ' if args.dry_run else ''}✅ Synced | {datetime.now(WIB).strftime('%H:%M:%S WIB')}"
+        f"{'🧪 DRY-RUN MODE | ' if args.dry_run else ''}✅ Synced | {datetime.now(WIB).strftime('%H:%M:%S WIB')}"
     )
     
     if args.dry_run:
@@ -698,8 +720,8 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        log.info(" Bot dihentikan (Ctrl+C)")
+        log.info("🛑 Bot dihentikan (Ctrl+C)")
         sys.exit(0)
     except Exception as e:
-        log.critical(f"💥 Fatal error: {e}", exc_info=True)
+        log.critical(f" Fatal error: {e}", exc_info=True)
         sys.exit(1)
