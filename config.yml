@@ -1,0 +1,74 @@
+# =============================================================================
+# KONFIGURASI BOT TRADING V25.0 ULTIMATE
+# =============================================================================
+# File ini adalah konfigurasi opsional.
+# Jika tidak ada, bot akan menggunakan DEFAULT_CONFIG di bot_v25.py
+# Environment Variables akan OVERRIDE nilai di file ini.
+# =============================================================================
+
+bot:
+  symbol: "frxXAUUSD"                # Simbol Deriv (frxXAUUSD = Gold)
+  deriv_app_id: "1089"               # App ID Deriv API
+  mt5_offset: 0.0                    # Offset harga untuk sinkronisasi MT5 ($)
+  consensus_threshold: 60            # Minimum konsensus (%) untuk kirim sinyal
+  signal_cooldown_minutes: 30        # Jeda minimum antar sinyal yang sama
+
+telegram:
+  token: ""                          # Bot Token dari @BotFather (atau pakai env var)
+  chat_id: ""                        # Chat ID tujuan (atau pakai env var)
+
+data_sources:
+  deriv:
+    enabled: true
+    candle_limit_m15: 300
+    candle_limit_h1: 200
+    candle_limit_h4: 200
+    ws_timeout: 10
+    max_retries: 3
+  binance:
+    enabled: true
+    symbol: "PAXGUSDT"
+    timeout: 6
+  yahoo:
+    enabled: true
+    symbol: "GC=F"
+    period: "2d"
+    interval: "15m"
+
+risk_management:
+  atr_period: 14
+  sl_min: 6.0                        # Stop Loss minimum ($)
+  sl_max: 16.0                       # Stop Loss maksimum ($)
+  sl_buffer: 1.2                     # Buffer tambahan SL ($)
+  tp_multipliers:
+    tp1: 1.3                         # Rasio TP1 terhadap SL
+    tp2: 2.2                         # Rasio TP2 terhadap SL
+    tp3: 3.5                         # Rasio TP3 terhadap SL
+    tp4: 5.0                         # Rasio TP4 terhadap SL
+
+session:
+  timezone: "Asia/Jakarta"
+  active_hours:                      # Sesi London/NY Overlap
+    start: 13
+    end: 23
+  active_mult: 1.35                  # Multiplier SL saat sesi aktif
+  low_mult: 1.15                     # Multiplier SL saat sesi rendah
+
+validation:
+  max_price_deviation: 25.0          # Toleransi selisih harga antar sumber ($)
+
+dna:
+  weight_min: 0.5                    # Bobot minimum engine
+  weight_max: 2.0                    # Bobot maksimum engine
+  reward_aligned: 0.02               # Kenaikan bobot jika searah tren makro
+  penalty_opposed: -0.03             # Penurunan bobot jika lawan tren makro
+  mean_reversion_rate: 0.05          # Kecepatan kembali ke bobot netral 1.0
+
+paths:
+  dna_file: "data/dna_10_engines.json"
+  journal_file: "data/trade_journal.json"
+  chart_path: "/tmp/chart_v250.png"
+  journal_max_entries: 50
+
+logging:
+  level: "INFO"                      # DEBUG, INFO, WARNING, ERROR
