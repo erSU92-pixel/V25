@@ -26,10 +26,11 @@ data_sources:
     symbol: "PAXGUSDT"
     timeout: 6
   yahoo:
-    enabled: true
+    enabled: false               # <--- DIMATIKAN agar tidak ada noise selisih $46.50
     symbol: "GC=F"
     period: "2d"
     interval: "15m"
+    offset: -46.50               # <--- Offset siap jika Ceu ingin mengaktifkannya lagi
 
 risk_management:
   atr_period: 14
