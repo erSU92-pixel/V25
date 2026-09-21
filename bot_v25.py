@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
 """
 ==============================================================================
-V25.0 ULTIMATE TRADING BOT - SINGLE FILE PRODUCTION READY
-==============================================================================
-Zero-dependency external config (selain Python packages)
-3-layer configuration: Default → config.yml → Environment Variables
-Production-grade error handling & auto-recovery
-
-Usage:
-  python bot_v25.py                    # Normal execution
-  python bot_v25.py --dry-run          # Test tanpa kirim sinyal
-  python bot_v25.py --check-config     # Validasi konfigurasi
-  python bot_v25.py --show-engines     # Tampilkan status engine
-
-Author: AI Assistant
-Version: 25.0
-Date: 2026-09-21
+V25.0 ULTIMATE TRADING BOT - PRODUCTION READY
+Multi-source validation | Multi-timeframe engines | Smart DNA evolution
 ==============================================================================
 """
 
@@ -26,6 +13,7 @@ import time
 import argparse
 import statistics
 import logging
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Any
@@ -34,8 +22,11 @@ import pytz
 import requests
 import pandas as pd
 import yfinance as yf
-import websocket
 import yaml
+
+# Suppress matplotlib warnings
+warnings.filterwarnings("ignore", message="Failed to extract font properties")
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 # ==============================================================================
 # 1. DEFAULT CONFIGURATION
@@ -58,7 +49,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "candle_limit_m15": 300,
             "candle_limit_h1": 200,
             "candle_limit_h4": 200,
-            "ws_timeout": 10,
+            "timeout": 10,
             "max_retries": 3
         },
         "binance": {
@@ -116,7 +107,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 # 2. CONFIGURATION LOADER
 # ==============================================================================
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep merge dua dictionary. Override menang."""
     result = base.copy()
     for k, v in override.items():
         if k in result and isinstance(result[k], dict) and isinstance(v, dict):
@@ -126,10 +116,7 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
     return result
 
 def load_config() -> Dict[str, Any]:
-    """Load config: Default → config.yml → Environment Variables"""
     cfg = DEFAULT_CONFIG.copy()
-    
-    # Layer 2: config.yml
     config_path = Path("config.yml")
     if config_path.exists():
         try:
@@ -137,9 +124,8 @@ def load_config() -> Dict[str, Any]:
                 yml_cfg = yaml.safe_load(f) or {}
             cfg = deep_merge(cfg, yml_cfg)
         except Exception as e:
-            print(f"⚠️ Gagal baca config.yml: {e}. Menggunakan default.")
+            print(f"️ Gagal baca config.yml: {e}. Menggunakan default.")
     
-    # Layer 3: Environment Variables
     env_map = {
         "TELEGRAM_BOT_TOKEN": ("telegram", "token"),
         "TELEGRAM_TOKEN": ("telegram", "token"),
@@ -157,13 +143,10 @@ def load_config() -> Dict[str, Any]:
                 except ValueError:
                     val = 0.0
             cfg[section][key] = val
-    
     return cfg
 
-# Load config global
 CFG: Dict[str, Any] = load_config()
 
-# Setup logging
 logging.basicConfig(
     level=getattr(logging, CFG["logging"]["level"], logging.INFO),
     format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -172,19 +155,16 @@ logging.basicConfig(
 log = logging.getLogger("bot_v25")
 
 WIB = pytz.timezone(CFG["session"]["timezone"])
-
-# Pastikan folder data ada
 Path(CFG["paths"]["dna_file"]).parent.mkdir(parents=True, exist_ok=True)
 
 # ==============================================================================
-# 3. TELEGRAM NOTIFICATIONS
+# 3. TELEGRAM
 # ==============================================================================
 def send_text(m: str) -> None:
-    """Kirim pesan teks ke Telegram."""
     token = CFG["telegram"]["token"]
     chat = CFG["telegram"]["chat_id"]
     if not token or not chat:
-        log.debug("Telegram tidak dikonfigurasi, skip kirim teks.")
+        log.debug("Telegram tidak dikonfigurasi")
         return
     try:
         requests.post(
@@ -193,10 +173,9 @@ def send_text(m: str) -> None:
             timeout=12
         )
     except Exception as e:
-        log.warning(f"Gagal kirim teks Telegram: {e}")
+        log.warning(f"Gagal kirim teks: {e}")
 
 def send_photo(cap: str, p: str) -> None:
-    """Kirim foto dengan caption ke Telegram."""
     token = CFG["telegram"]["token"]
     chat = CFG["telegram"]["chat_id"]
     if not token or not chat:
@@ -210,20 +189,18 @@ def send_photo(cap: str, p: str) -> None:
                 timeout=20
             )
     except Exception as e:
-        log.warning(f"Gagal kirim foto: {e}. Fallback ke teks.")
+        log.warning(f"Gagal kirim foto: {e}")
         send_text(cap)
 
 # ==============================================================================
-# 4. PERSISTENCE (JSON I/O)
+# 4. PERSISTENCE
 # ==============================================================================
 def backup_file(path: str) -> None:
-    """Backup file sebelum overwrite (simpan max 3 backup)."""
     p = Path(path)
     if p.exists():
         backup = p.with_suffix(f".backup_{int(time.time())}.json")
         try:
             p.rename(backup)
-            # Hapus backup lama (simpan max 3)
             backups = sorted(p.parent.glob(f"{p.stem}.backup_*.json"))
             for old in backups[:-3]:
                 old.unlink()
@@ -231,7 +208,6 @@ def backup_file(path: str) -> None:
             log.warning(f"Gagal backup {path}: {e}")
 
 def load_json(p: str, default: Any) -> Any:
-    """Load JSON file dengan error handling."""
     try:
         path = Path(p)
         if path.exists() and path.stat().st_size > 0:
@@ -242,7 +218,6 @@ def load_json(p: str, default: Any) -> Any:
     return default
 
 def save_json(p: str, d: Any) -> None:
-    """Save JSON file dengan auto-backup."""
     try:
         backup_file(p)
         with open(p, 'w', encoding='utf-8') as f:
@@ -251,57 +226,57 @@ def save_json(p: str, d: Any) -> None:
         log.error(f"Error save {p}: {e}")
 
 # ==============================================================================
-# 5. DATA FETCHING
+# 5. DATA FETCHING (HTTP REST API - ANTI BLOCK)
 # ==============================================================================
 def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFrame], Optional[float]]:
-    """Ambil candle dari Deriv WebSocket."""
+    """Ambil candle dari Deriv menggunakan HTTP REST API (Anti-Cloudflare Block)."""
     ds = CFG["data_sources"]["deriv"]
     if not ds["enabled"]:
         return None, None
     
-    url = f"wss://ws.derivws.com/websockets/v3?app_id={CFG['bot']['deriv_app_id']}"
+    url = "https://api.deriv.com/api/v3"
     req_id = int(time.time() * 1000)
     
+    payload = {
+        "ticks_history": CFG["bot"]["symbol"],
+        "count": limit,
+        "end": "latest",
+        "granularity": gran,
+        "style": "candles",
+        "req_id": req_id,
+        "app_id": int(CFG["bot"]["deriv_app_id"])
+    }
+    
     for attempt in range(ds["max_retries"]):
-        ws = None
         try:
-            ws = websocket.create_connection(url, timeout=ds["ws_timeout"])
-            ws.send(json.dumps({
-                "ticks_history": CFG["bot"]["symbol"],
-                "count": limit,
-                "end": "latest",
-                "granularity": gran,
-                "style": "candles",
-                "req_id": req_id
-            }))
+            response = requests.post(url, json=payload, timeout=ds["timeout"])
+            response.raise_for_status()
+            res = response.json()
             
-            for _ in range(15):
-                res = json.loads(ws.recv())
-                if res.get("req_id") == req_id and "candles" in res:
-                    df = pd.DataFrame(res["candles"])
-                    for c in ["close", "high", "low", "open"]:
-                        df[c] = pd.to_numeric(df[c], errors='coerce').astype(float)
-                    if "volume" not in df.columns:
-                        df["volume"] = 0.0
-                    else:
-                        df["volume"] = pd.to_numeric(df["volume"], errors='coerce').fillna(0.0)
-                    ws.close()
-                    return df, float(df["close"].iloc[-1])
-            
-            if ws:
-                ws.close()
+            if "error" in res:
+                log.warning(f"Deriv API Error: {res['error'].get('message', 'Unknown')}")
+                time.sleep(2 ** attempt)
+                continue
+                
+            if "candles" in res:
+                df = pd.DataFrame(res["candles"])
+                for c in ["close", "high", "low", "open"]:
+                    df[c] = pd.to_numeric(df[c], errors='coerce').astype(float)
+                if "volume" not in df.columns:
+                    df["volume"] = 0.0
+                else:
+                    df["volume"] = pd.to_numeric(df["volume"], errors='coerce').fillna(0.0)
+                return df, float(df["close"].iloc[-1])
+                
+        except requests.exceptions.RequestException as e:
+            log.warning(f"Deriv HTTP attempt {attempt+1}/{ds['max_retries']} gagal: {e}")
+            time.sleep(2 ** attempt)
         except Exception as e:
-            log.warning(f"Deriv attempt {attempt+1}/{ds['max_retries']} gagal: {e}")
-            if ws:
-                try:
-                    ws.close()
-                except:
-                    pass
+            log.warning(f"Deriv unexpected error: {e}")
             time.sleep(2 ** attempt)
     return None, None
 
 def fetch_binance_paxg() -> Optional[float]:
-    """Ambil harga PAXG dari Binance."""
     ds = CFG["data_sources"]["binance"]
     if not ds["enabled"]:
         return None
@@ -317,7 +292,6 @@ def fetch_binance_paxg() -> Optional[float]:
     return None
 
 def fetch_yf_gc() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
-    """Ambil data GC=F dari Yahoo Finance."""
     ds = CFG["data_sources"]["yahoo"]
     if not ds["enabled"]:
         return None, None
@@ -328,11 +302,8 @@ def fetch_yf_gc() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
         df = df.reset_index().rename(columns={
-            "Close": "close",
-            "High": "high",
-            "Low": "low",
-            "Open": "open",
-            "Volume": "volume"
+            "Close": "close", "High": "high", "Low": "low",
+            "Open": "open", "Volume": "volume"
         })
         df["volume"] = pd.to_numeric(df["volume"], errors='coerce').fillna(0.0)
         price = float(df["close"].iloc[-1])
@@ -343,7 +314,6 @@ def fetch_yf_gc() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
         return None, None
 
 def get_multi_source_price() -> Tuple[float, pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, float]]:
-    """Ambil harga dari semua sumber dengan validasi."""
     prices: Dict[str, float] = {}
     df_m15, p_deriv = fetch_deriv(CFG["data_sources"]["deriv"]["candle_limit_m15"], 900)
     if p_deriv:
@@ -364,7 +334,6 @@ def get_multi_source_price() -> Tuple[float, pd.DataFrame, pd.DataFrame, pd.Data
     
     vals = list(prices.values())
     median_price = float(statistics.median(vals))
-    
     max_dev = CFG["validation"]["max_price_deviation"]
     valid_prices = {k: v for k, v in prices.items() if abs(v - median_price) <= max_dev}
     if not valid_prices:
@@ -387,10 +356,9 @@ def get_multi_source_price() -> Tuple[float, pd.DataFrame, pd.DataFrame, pd.Data
     return final_price, df_m15, df_h1, df_h4, valid_prices
 
 # ==============================================================================
-# 6. TECHNICAL INDICATORS
+# 6. INDICATORS
 # ==============================================================================
 def calc_atr(df: pd.DataFrame, period: Optional[int] = None) -> float:
-    """Hitung Average True Range."""
     if period is None:
         period = CFG["risk_management"]["atr_period"]
     try:
@@ -403,7 +371,6 @@ def calc_atr(df: pd.DataFrame, period: Optional[int] = None) -> float:
         return 8.0
 
 def rsi(df: pd.DataFrame, p: int = 14) -> pd.Series:
-    """Hitung Relative Strength Index."""
     try:
         delta = df["close"].diff()
         gain = delta.where(delta > 0, 0.0).rolling(p).mean()
@@ -414,82 +381,63 @@ def rsi(df: pd.DataFrame, p: int = 14) -> pd.Series:
         return pd.Series([50.0] * len(df))
 
 # ==============================================================================
-# 7. 10 CORE ENGINES (MULTI-TIMEFRAME)
+# 7. 10 CORE ENGINES
 # ==============================================================================
 def NADI(df: pd.DataFrame) -> Tuple[int, float]:
-    """EMA 9/21 crossover."""
     e9 = df["close"].ewm(9).mean().iloc[-1]
     e21 = df["close"].ewm(21).mean().iloc[-1]
     pr = df["close"].iloc[-1]
-    if pr > e9 > e21:
-        return (1, 1.5)
-    if pr < e9 < e21:
-        return (-1, 1.5)
+    if pr > e9 > e21: return (1, 1.5)
+    if pr < e9 < e21: return (-1, 1.5)
     return (0, 1.5)
 
 def PADI(df: pd.DataFrame) -> Tuple[int, float]:
-    """RSI momentum."""
     r = float(rsi(df).iloc[-1])
-    if r > 55:
-        return (1, 1.3)
-    if r < 45:
-        return (-1, 1.3)
+    if r > 55: return (1, 1.3)
+    if r < 45: return (-1, 1.3)
     return (0, 1.3)
 
 def API_ENGINE(df: pd.DataFrame) -> Tuple[int, float]:
-    """Candle body strength."""
     body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
     avg_b = abs(df["close"] - df["open"]).rolling(20).mean().iloc[-1]
     pr, prev = df["close"].iloc[-1], df["close"].iloc[-2]
-    if body > avg_b and pr > prev:
-        return (1, 1.2)
-    if body > avg_b and pr < prev:
-        return (-1, 1.2)
+    if body > avg_b and pr > prev: return (1, 1.2)
+    if body > avg_b and pr < prev: return (-1, 1.2)
     return (0, 1.2)
 
 def ANGIN(df: pd.DataFrame) -> Tuple[int, float]:
-    """Wick analysis."""
     hi, lo, cl = df["high"].iloc[-1], df["low"].iloc[-1], df["close"].iloc[-1]
     upper_wick = hi - cl
     lower_wick = cl - lo
-    if upper_wick > lower_wick * 1.5:
-        return (-1, 1.0)
-    if lower_wick > upper_wick * 1.5:
-        return (1, 1.0)
+    if upper_wick > lower_wick * 1.5: return (-1, 1.0)
+    if lower_wick > upper_wick * 1.5: return (1, 1.0)
     return (0, 1.0)
 
 def EMBER(df: pd.DataFrame) -> Tuple[int, float]:
-    """MA10 trend."""
     pr = df["close"].iloc[-1]
     ma10 = df["close"].rolling(10).mean().iloc[-1]
     return (1, 1.0) if pr > ma10 else (-1, 1.0)
 
 def LUMPUR(df: pd.DataFrame) -> Tuple[int, float]:
-    """Volume confirmation."""
     vol = df["volume"].iloc[-1]
     vma = df["volume"].rolling(20).mean().iloc[-1]
     pr, prev = df["close"].iloc[-1], df["close"].iloc[-2]
-    if vol > vma and pr > prev:
-        return (1, 1.1)
-    if vol > vma and pr < prev:
-        return (-1, 1.1)
+    if vol > vma and pr > prev: return (1, 1.1)
+    if vol > vma and pr < prev: return (-1, 1.1)
     return (0, 1.1)
 
 def SEMUT(df: pd.DataFrame) -> Tuple[int, float]:
-    """EMA 50 trend."""
     e50 = df["close"].ewm(50).mean().iloc[-1]
     pr = df["close"].iloc[-1]
     return (1, 1.4) if pr > e50 else (-1, 1.4)
 
 def WAYANG(df: pd.DataFrame) -> Tuple[int, float]:
-    """Pivot point analysis."""
     hi = df["high"].rolling(20).max().iloc[-1]
     lo = df["low"].rolling(20).min().iloc[-1]
     pr = df["close"].iloc[-1]
     return (1, 1.2) if pr > (hi + lo) / 2 else (-1, 1.2)
 
 def AKAR(df: pd.DataFrame) -> Tuple[int, float]:
-    """SMA 200 macro trend."""
     if len(df) >= 200:
         s200 = df["close"].rolling(200).mean().iloc[-1]
     else:
@@ -498,55 +446,46 @@ def AKAR(df: pd.DataFrame) -> Tuple[int, float]:
     return (1, 2.0) if pr > s200 else (-1, 2.0)
 
 def SAWAH(df: pd.DataFrame) -> Tuple[int, float]:
-    """Fibonacci retracement."""
     hi = df["high"].rolling(50).max().iloc[-1]
     lo = df["low"].rolling(50).min().iloc[-1]
     pr = df["close"].iloc[-1]
     f62 = lo + (hi - lo) * 0.618
     f38 = lo + (hi - lo) * 0.382
-    if pr > f62:
-        return (1, 1.8)
-    if pr < f38:
-        return (-1, 1.8)
+    if pr > f62: return (1, 1.8)
+    if pr < f38: return (-1, 1.8)
     return (0, 1.8)
 
 # ==============================================================================
-# 8. SMART DNA EVOLUTION
+# 8. DNA EVOLUTION
 # ==============================================================================
 def evolve_dna(dna: Dict[str, Any], engines_results: List[Tuple[str, int, float]], h1_tr: int, h4_tr: int) -> Dict[str, Any]:
-    """Evolusi bobot engine berdasarkan keselarasan dengan tren Higher Timeframe."""
     if "engines" not in dna:
         dna["engines"] = {}
-    
     dna_cfg = CFG["dna"]
     macro_bias = 0
     if h1_tr == 1 and h4_tr == 1:
         macro_bias = 1
     elif h1_tr == -1 and h4_tr == -1:
         macro_bias = -1
-    
     for name, sc, _ in engines_results:
         if name not in dna["engines"]:
             dna["engines"][name] = {"weight": 1.0}
         curr = dna["engines"][name]["weight"]
-        
         if macro_bias != 0 and sc == macro_bias:
             target_adj = dna_cfg["reward_aligned"]
         elif macro_bias != 0 and sc == -macro_bias:
             target_adj = dna_cfg["penalty_opposed"]
         else:
             target_adj = (1.0 - curr) * dna_cfg["mean_reversion_rate"]
-        
         new_w = max(dna_cfg["weight_min"], min(dna_cfg["weight_max"], curr + target_adj))
         dna["engines"][name]["weight"] = round(new_w, 4)
     return dna
 
 # ==============================================================================
-# 9. CHART GENERATION
+# 9. CHART
 # ==============================================================================
 def make_chart(df: pd.DataFrame, entry: float, sl: float, t1: float, t3: float, 
                signal: str, conf: float, atr_val: float) -> Optional[str]:
-    """Generate chart visual untuk Telegram."""
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -556,22 +495,17 @@ def make_chart(df: pd.DataFrame, entry: float, sl: float, t1: float, t3: float,
         plt.figure(figsize=(12, 6))
         sub = df.tail(80)
         plt.plot(sub["close"].values, label="Price M15", color="gold", linewidth=1.5)
-        
         if len(df) >= 50:
             sma50 = df["close"].rolling(50).mean().tail(80).values
-            plt.plot(sma50, label="H1 SMA 50 (Ref)", color="blue", linestyle="--", alpha=0.6)
-        
+            plt.plot(sma50, label="H1 SMA 50", color="blue", linestyle="--", alpha=0.6)
         plt.axhline(entry, color="cyan", linewidth=2, label=f"Entry {entry:.2f}")
         plt.axhline(sl, color="red", linewidth=2, label=f"SL {sl:.2f}")
         plt.axhline(t1, color="green", linestyle=":", label=f"TP1 {t1:.2f}")
         plt.axhline(t3, color="darkgreen", linestyle="-", label=f"TP3 {t3:.2f}")
-        
-        plt.title(f"{signal} Signal | Confidence: {conf:.0f}% | ATR: {atr_val:.2f}", 
-                  fontsize=12, fontweight='bold')
+        plt.title(f"{signal} | Confidence: {conf:.0f}% | ATR: {atr_val:.2f}", fontsize=12, fontweight='bold')
         plt.legend(fontsize=9, loc='upper left')
         plt.grid(alpha=0.3)
         plt.tight_layout()
-        
         chart_path = CFG["paths"]["chart_path"]
         plt.savefig(chart_path, dpi=150, bbox_inches='tight')
         plt.close()
@@ -581,10 +515,9 @@ def make_chart(df: pd.DataFrame, entry: float, sl: float, t1: float, t3: float,
         return None
 
 # ==============================================================================
-# 10. MAIN EXECUTION
+# 10. MAIN
 # ==============================================================================
 def check_cooldown(journal: List[Dict[str, Any]], signal: str) -> bool:
-    """Cek apakah sinyal terakhir terlalu baru (anti-spam)."""
     if not journal:
         return True
     last = journal[-1]
@@ -599,7 +532,6 @@ def check_cooldown(journal: List[Dict[str, Any]], signal: str) -> bool:
         return True
 
 def main() -> int:
-    """Main execution flow."""
     parser = argparse.ArgumentParser(description="V25.0 Trading Bot")
     parser.add_argument("--dry-run", action="store_true", help="Test tanpa kirim sinyal")
     parser.add_argument("--check-config", action="store_true", help="Validasi konfigurasi")
@@ -611,9 +543,6 @@ def main() -> int:
         log.info(f"  Symbol: {CFG['bot']['symbol']}")
         log.info(f"  MT5 Offset: {CFG['bot']['mt5_offset']}")
         log.info(f"  Telegram: {'✅' if CFG['telegram']['token'] else '❌'}")
-        log.info(f"  Data Sources: Deriv={CFG['data_sources']['deriv']['enabled']}, "
-                f"Binance={CFG['data_sources']['binance']['enabled']}, "
-                f"Yahoo={CFG['data_sources']['yahoo']['enabled']}")
         return 0
     
     log.info("🚀 V25.0 ULTIMATE START")
@@ -623,21 +552,15 @@ def main() -> int:
     try:
         price, df_m15, df_h1, df_h4, sources = get_multi_source_price()
     except Exception as e:
-        log.error(f"Gagal mengambil harga multi-source: {e}")
-        send_text(f"🛑 <b>CRITICAL ERROR</b>\nGagal mengambil data harga:\n{e}")
+        log.error(f"Gagal mengambil harga: {e}")
+        send_text(f" <b>CRITICAL ERROR</b>\nGagal mengambil data harga:\n{e}")
         return 1
     
     engine_map = [
-        ("NADI", NADI, df_m15),
-        ("PADI", PADI, df_m15),
-        ("API", API_ENGINE, df_m15),
-        ("ANGIN", ANGIN, df_m15),
-        ("EMBER", EMBER, df_m15),
-        ("LUMPUR", LUMPUR, df_m15),
-        ("SEMUT", SEMUT, df_h1),
-        ("WAYANG", WAYANG, df_h1),
-        ("AKAR", AKAR, df_h4),
-        ("SAWAH", SAWAH, df_h4)
+        ("NADI", NADI, df_m15), ("PADI", PADI, df_m15), ("API", API_ENGINE, df_m15),
+        ("ANGIN", ANGIN, df_m15), ("EMBER", EMBER, df_m15), ("LUMPUR", LUMPUR, df_m15),
+        ("SEMUT", SEMUT, df_h1), ("WAYANG", WAYANG, df_h1),
+        ("AKAR", AKAR, df_h4), ("SAWAH", SAWAH, df_h4)
     ]
     
     if args.show_engines:
@@ -662,7 +585,6 @@ def main() -> int:
             dna_w = dna.get("engines", {}).get(name, {}).get("weight", 1.0)
             final_w = base_w * dna_w
             engines_results.append((name, sc, final_w))
-            
             if sc > 0:
                 buy_w += final_w
             elif sc < 0:
@@ -680,7 +602,6 @@ def main() -> int:
     
     h1_tr = get_trend(df_h1)
     h4_tr = get_trend(df_h4)
-    
     dna = evolve_dna(dna, engines_results, h1_tr, h4_tr)
     save_json(CFG["paths"]["dna_file"], dna)
     
@@ -746,23 +667,22 @@ def main() -> int:
     session_info = "🔥 London/NY Overlap" if is_active else "🌙 Asian Session"
     
     caption = (
-        f"💎 <b>V25.0 ULTIMATE - {signal} ({consensus:.0f}%)</b>\n"
+        f" <b>V25.0 ULTIMATE - {signal} ({consensus:.0f}%)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>Sumber Harga:</b>\n{sumber_text}\n"
         f"🎯 <b>Adjusted Price:</b> {price:.2f} {offset_info}\n"
-        f"🕒 <b>Sesi:</b> {session_info} | ATR: {atr_m15:.2f}\n"
+        f" <b>Sesi:</b> {session_info} | ATR: {atr_m15:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>Entry:</b> <code>{entry:.2f}</code>\n"
-        f"🔴 <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
+        f" <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
         f"🟩 <b>TP1:</b> <code>{t1:.2f}</code> | <b>TP2:</b> <code>{t2:.2f}</code>\n"
         f"🟩 <b>TP3:</b> <code>{t3:.2f}</code> | <b>TP4:</b> <code>{t4:.2f}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{'🧪 DRY-RUN MODE | ' if args.dry_run else ''}✅ Synced & Validated | {datetime.now(WIB).strftime('%H:%M:%S WIB')}"
+        f"{' DRY-RUN MODE | ' if args.dry_run else ''}✅ Synced | {datetime.now(WIB).strftime('%H:%M:%S WIB')}"
     )
     
     if args.dry_run:
-        log.info(f"🧪 DRY-RUN: {signal} @ {entry:.2f} (Consensus: {consensus:.0f}%)")
-        log.info(f"📋 Caption:\n{caption}")
+        log.info(f" DRY-RUN: {signal} @ {entry:.2f} (Consensus: {consensus:.0f}%)")
         return 0
     
     chart_path = make_chart(df_m15, entry, sl, t1, t3, signal, consensus, atr_m15)
@@ -771,14 +691,14 @@ def main() -> int:
     else:
         send_text(caption)
     
-    log.info(f"✅ SINYAL BERHASIL DIKIRIM: {signal} @ {entry:.2f} (Consensus: {consensus:.0f}%)")
+    log.info(f"✅ SINYAL DIKIRIM: {signal} @ {entry:.2f} (Consensus: {consensus:.0f}%)")
     return 0
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        log.info("🛑 Bot dihentikan oleh user (Ctrl+C)")
+        log.info(" Bot dihentikan (Ctrl+C)")
         sys.exit(0)
     except Exception as e:
         log.critical(f"💥 Fatal error: {e}", exc_info=True)
