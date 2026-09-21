@@ -26,11 +26,11 @@ data_sources:
     symbol: "PAXGUSDT"
     timeout: 6
   yahoo:
-    enabled: false               # <--- DIMATIKAN agar tidak ada noise selisih $46.50
+    enabled: true                # <--- DIAKTIFKAN KEMBALI (Wajib untuk GitHub Actions)
     symbol: "GC=F"
     period: "2d"
     interval: "15m"
-    offset: -46.50               # <--- Offset siap jika Ceu ingin mengaktifkannya lagi
+    offset: -46.50               # <--- Otomatis memotong harga agar sama persis dengan MT5
 
 risk_management:
   atr_period: 14
