@@ -228,7 +228,7 @@ def save_json(p: str, d: Any) -> None:
         log.error(f"Error save {p}: {e}")
 
 # ==============================================================================
-# 5. DATA FETCHING (ROBUST FALLBACK)
+# 5. DATA FETCHING (ROBUST FALLBACK & CLOUDFLARE OPTIMIZED)
 # ==============================================================================
 def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFrame], Optional[float]]:
     ds = CFG["data_sources"]["deriv"]
@@ -238,9 +238,11 @@ def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFram
     url = f"wss://ws.derivws.com/websockets/v3?app_id={CFG['bot']['deriv_app_id']}"
     req_id = int(time.time() * 1000)
     
+    # Header diperkaya agar menyerupai browser asli guna menghindari error 520 Cloudflare
     headers = [
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Origin: https://app.deriv.com"
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Origin: https://app.deriv.com",
+        "Accept-Language: en-US,en;q=0.9"
     ]
     
     payload = {
@@ -280,7 +282,8 @@ def fetch_deriv(limit: int = 300, gran: int = 900) -> Tuple[Optional[pd.DataFram
                     ws.close()
                 except:
                     pass
-            time.sleep(2 ** attempt)
+            # Jeda backoff ditingkatkan agar tidak terlalu agresif menabrak rate-limit Cloudflare
+            time.sleep(3 + (2 * attempt))
     return None, None
 
 def fetch_binance_paxg() -> Optional[float]:
