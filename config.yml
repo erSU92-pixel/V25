@@ -1,10 +1,9 @@
 # =============================================================================
-# KONFIGURASI BOT TRADING V25.0 ULTIMATE
+# KONFIGURASI BOT TRADING V25.0 HYBRID ULTIMATE
 # =============================================================================
 
 bot:
-  symbol: "frxXAUUSD"
-  deriv_app_id: "1089"
+  symbol: "GC=F"
   mt5_offset: 0.0
   consensus_threshold: 60
   signal_cooldown_minutes: 30
@@ -14,23 +13,22 @@ telegram:
   chat_id: ""
 
 data_sources:
-  deriv:
+  yahoo:
     enabled: true
-    candle_limit_m15: 300
-    candle_limit_h1: 200
-    candle_limit_h4: 200
-    timeout: 10
-    max_retries: 3
+    symbol: "GC=F"
+    period_m15: "5d"
+    interval_m15: "15m"
+    offset: -46.50               # <--- Offset Futures ke Spot
+  gold_api:
+    enabled: true
+    url: "https://api.metals.live/v1/spot/gold"
+  coingecko:
+    enabled: true
+    url: "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
   binance:
     enabled: true
     symbol: "PAXGUSDT"
-    timeout: 6
-  yahoo:
-    enabled: true                # <--- DIAKTIFKAN KEMBALI (Wajib untuk GitHub Actions)
-    symbol: "GC=F"
-    period: "2d"
-    interval: "15m"
-    offset: -46.50               # <--- Otomatis memotong harga agar sama persis dengan MT5
+    url: "https://api.binance.com/api/v3/ticker/price"
 
 risk_management:
   atr_period: 14
