@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ==============================================================================
-V25.0 HYBRID ULTIMATE - 4 SOURCE ANTI-BLOCK (GITHUB ACTIONS OPTIMIZED)
-Sources: Yahoo Finance (Candles+Price), Gold-API (Spot), CoinGecko (PAXG), Binance (PAXG)
+V25.0 HYBRID ULTIMATE - 3 SOURCE ZERO-API ANTI-BLOCK (SPOT XAUUSD FOCUSED)
+Sources: Biquote.io (Spot), TradingView Scanner (Spot OANDA), Yahoo Finance (Futures)
 ==============================================================================
 """
 
@@ -34,8 +34,8 @@ warnings.filterwarnings("ignore", module="matplotlib.font_manager")
 # ==============================================================================
 DEFAULT_CONFIG: Dict[str, Any] = {
     "bot": {
-        "symbol": "GC=F", # Yahoo Symbol
-        "mt5_offset": 0.0,
+        "symbol": "XAUUSD",
+        "mt5_offset": 0.0,  # Offset tambahan manual jika broker kamu punya markup spread
         "consensus_threshold": 60,
         "signal_cooldown_minutes": 30
     },
@@ -44,25 +44,23 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "chat_id": ""
     },
     "data_sources": {
+        "biquote": {
+            "enabled": True,
+            "url": "https://biquote.io/api/XAUUSD",
+            "offset": 0.0  # Murni Spot XAUUSD
+        },
+        "tradingview": {
+            "enabled": True,
+            "url": "https://scanner.tradingview.com/forex/scan",
+            "symbol": "OANDA:XAUUSD",
+            "offset": 0.0  # Spot XAUUSD OANDA
+        },
         "yahoo": {
             "enabled": True,
             "symbol": "GC=F",
             "period_m15": "5d",
             "interval_m15": "15m",
-            "offset": -46.50  # Futures to Spot offset
-        },
-        "gold_api": {
-            "enabled": True,
-            "url": "https://api.metals.live/v1/spot/gold"
-        },
-        "coingecko": {
-            "enabled": True,
-            "url": "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
-        },
-        "binance": {
-            "enabled": True,
-            "symbol": "PAXGUSDT",
-            "url": "https://api.binance.com/api/v3/ticker/price"
+            "offset": -34.30  # Offset penyesuaian Gold Futures GC=F ke Spot XAUUSD
         }
     },
     "risk_management": {
@@ -193,14 +191,54 @@ def save_json(p: str, d: Any) -> None:
     except Exception as e: log.error(f"Error save {p}: {e}")
 
 # ==============================================================================
-# 4. DATA FETCHING (4 SOURCES - ANTI BLOCK)
+# 4. DATA FETCHING (NEW 3 SOURCES - ZERO API KEY + INDIVIDUAL OFFSETS)
 # ==============================================================================
+def fetch_biquote() -> Optional[float]:
+    ds = CFG["data_sources"]["biquote"]
+    if not ds["enabled"]: return None
+    try:
+        r = requests.get(ds["url"], timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            bid = data.get("bid")
+            ask = data.get("ask")
+            if bid and ask:
+                mid_price = (float(bid) + float(ask)) / 2.0
+                return mid_price + float(ds.get("offset", 0.0))
+    except Exception as e:
+        log.warning(f"Biquote.io gagal: {e}")
+    return None
+
+def fetch_tradingview() -> Optional[float]:
+    ds = CFG["data_sources"]["tradingview"]
+    if not ds["enabled"]: return None
+    try:
+        payload = {
+            "symbols": {"tickers": [ds["symbol"]]},
+            "columns": ["close"]
+        }
+        r = requests.post(ds["url"], json=payload, timeout=5)
+        if r.status_code == 200:
+            res = r.json()
+            data = res.get('data', [])
+            if data and len(data) > 0:
+                raw_p = float(data[0]['d'][0])
+                return raw_p + float(ds.get("offset", 0.0))
+    except Exception as e:
+        log.warning(f"TradingView gagal: {e}")
+    return None
+
 def fetch_yahoo() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
     ds = CFG["data_sources"]["yahoo"]
     if not ds["enabled"]: return None, None
     try:
-        df = yf.Ticker(ds["symbol"]).history(period=ds["period_m15"], interval=ds["interval_m15"])
+        df = yf.download(ds["symbol"], period=ds["period_m15"], interval=ds["interval_m15"], progress=False, auto_adjust=True)
         if df is None or len(df) < 5: return None, None
+        
+        # Format dataframe jikaMultiIndex
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         if df.index.tz is not None: df.index = df.index.tz_localize(None)
         df = df.reset_index().rename(columns={"Close": "close", "High": "high", "Low": "low", "Open": "open", "Volume": "volume"})
         
@@ -216,64 +254,21 @@ def fetch_yahoo() -> Tuple[Optional[pd.DataFrame], Optional[float]]:
         log.warning(f"Yahoo Finance gagal: {e}")
         return None, None
 
-def fetch_gold_api() -> Optional[float]:
-    ds = CFG["data_sources"]["gold_api"]
-    if not ds["enabled"]: return None
-    try:
-        r = requests.get(ds["url"], timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            # metals.live returns [{"gold": 4349.30}]
-            if isinstance(data, list) and len(data) > 0:
-                return float(data[0].get("gold", 0))
-            elif isinstance(data, dict) and "gold" in data:
-                return float(data["gold"])
-    except Exception as e:
-        log.warning(f"Gold-API gagal: {e}")
-    return None
-
-def fetch_coingecko() -> Optional[float]:
-    ds = CFG["data_sources"]["coingecko"]
-    if not ds["enabled"]: return None
-    try:
-        r = requests.get(ds["url"], timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            return float(data.get("pax-gold", {}).get("usd", 0))
-    except Exception as e:
-        log.warning(f"CoinGecko gagal: {e}")
-    return None
-
-def fetch_binance() -> Optional[float]:
-    ds = CFG["data_sources"]["binance"]
-    if not ds["enabled"]: return None
-    try:
-        r = requests.get(ds["url"], params={"symbol": ds["symbol"]}, timeout=5)
-        if r.status_code == 200: return float(r.json()["price"])
-    except Exception as e:
-        log.warning(f"Binance gagal: {e}")
-    return None
-
 def get_multi_source_price() -> Tuple[Optional[float], Optional[pd.DataFrame], Dict[str, float]]:
-    """Ambil harga dari 4 sumber, validasi, dan kembalikan candle Yahoo untuk engine."""
+    """Ambil harga dari 3 sumber, kalkulasi offset & fallback toleran error."""
     prices: Dict[str, float] = {}
-    df_m15 = None
     
-    # 1. Yahoo (Candles + Price)
+    # 1. Biquote.io (Spot XAUUSD)
+    p_bq = fetch_biquote()
+    if p_bq: prices["Biquote Spot"] = p_bq
+    
+    # 2. TradingView (OANDA:XAUUSD)
+    p_tv = fetch_tradingview()
+    if p_tv: prices["TradingView OANDA"] = p_tv
+    
+    # 3. Yahoo Finance (Candles + Adjusted Price)
     df_m15, p_yahoo = fetch_yahoo()
-    if p_yahoo: prices["Yahoo Spot"] = p_yahoo
-    
-    # 2. Gold-API (Spot XAU/USD)
-    p_gold = fetch_gold_api()
-    if p_gold: prices["Gold-API"] = p_gold
-    
-    # 3. CoinGecko (PAXG)
-    p_cg = fetch_coingecko()
-    if p_cg: prices["CoinGecko"] = p_cg
-    
-    # 4. Binance (PAXG)
-    p_bin = fetch_binance()
-    if p_bin: prices["Binance"] = p_bin
+    if p_yahoo: prices["Yahoo (Adj Spot)"] = p_yahoo
     
     if not prices:
         log.warning("⚠️ Semua sumber harga gagal. Skip siklus ini.")
@@ -292,9 +287,9 @@ def get_multi_source_price() -> Tuple[Optional[float], Optional[pd.DataFrame], D
     
     log.info(f"Harga Valid: {valid_prices} | Median: {raw_price:.2f} | Final: {final_price:.2f}")
     
-    # Fallback candle jika Yahoo gagal (buat dummy dataframe agar engine tidak crash)
+    # Fallback candle jika Yahoo gagal (buat dummy dataframe)
     if df_m15 is None:
-        log.warning("⚠️ Yahoo gagal, menggunakan dummy candle dari harga median.")
+        log.warning("⚠️ Yahoo Candles gagal, menggunakan dummy candle dari harga median.")
         df_m15 = pd.DataFrame({
             "close": [final_price]*50, "high": [final_price+2]*50, 
             "low": [final_price-2]*50, "open": [final_price]*50, "volume": [0.0]*50
@@ -440,11 +435,9 @@ def main() -> int:
         log.error(f"Fatal fetch error: {e}"); return 1
 
     if price is None or df_m15 is None:
-        log.warning("️ Data tidak tersedia. Skip aman.")
+        log.warning("⚠️ Data tidak tersedia. Skip aman.")
         return 0
     
-    # Karena kita hanya punya M15 dari Yahoo, kita gunakan M15 untuk semua engine 
-    # (Ini lebih stabil daripada fallback H1/H4 yang sering kosong di Yahoo free tier)
     engine_map = [
         ("NADI", NADI, df_m15), ("PADI", PADI, df_m15), ("API", API_ENGINE, df_m15),
         ("ANGIN", ANGIN, df_m15), ("EMBER", EMBER, df_m15), ("LUMPUR", LUMPUR, df_m15),
@@ -466,7 +459,6 @@ def main() -> int:
         except Exception as e:
             log.warning(f"Engine {name} error: {e}")
     
-    # Simple trend for DNA evolution
     s50 = df_m15["close"].rolling(50).mean().iloc[-1] if len(df_m15) >= 50 else df_m15["close"].mean()
     pr = df_m15["close"].iloc[-1]
     trend = 1 if pr > s50 else (-1 if pr < s50 else 0)
@@ -519,7 +511,7 @@ def main() -> int:
     
     sumber_text = "\n".join([f"• {k}: {v:.2f}" for k, v in sources.items()])
     offset = CFG["bot"]["mt5_offset"]
-    offset_info = f"\n️ <b>MT5 Offset:</b> {offset:+.2f}" if offset != 0 else ""
+    offset_info = f"\n⚠️ <b>MT5 Offset:</b> {offset:+.2f}" if offset != 0 else ""
     session_info = "🔥 London/NY" if is_active else "🌙 Asian"
     
     caption = (
@@ -530,7 +522,7 @@ def main() -> int:
         f"🕒 <b>Sesi:</b> {session_info} | ATR: {atr_m15:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>Entry:</b> <code>{entry:.2f}</code>\n"
-        f" <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
+        f"🔴 <b>SL:</b> <code>{sl:.2f}</code> (-{sl_base:.2f}$)\n"
         f"🟩 <b>TP1:</b> <code>{t1:.2f}</code> | <b>TP2:</b> <code>{t2:.2f}</code>\n"
         f"🟩 <b>TP3:</b> <code>{t3:.2f}</code> | <b>TP4:</b> <code>{t4:.2f}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
