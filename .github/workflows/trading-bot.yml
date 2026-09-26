@@ -1,4 +1,4 @@
-Name: Run Trading Bot Every 15 Minutes
+name: Run Trading Bot Every 15 Minutes
 
 on:
   schedule:
@@ -39,9 +39,8 @@ jobs:
         run: |
           python bot_v25.py
 
-      # STEP TAMBAHAN: Menyimpan evolusi DNA dan Jurnal Trading agar tidak hilang
       - name: Commit & Push Updated DNA & Journal
-        if: always() # Tetap jalan walaupun bot skip signal
+        if: always()
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
