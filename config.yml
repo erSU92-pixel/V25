@@ -1,10 +1,10 @@
 # =============================================================================
-# KONFIGURASI BOT TRADING V25.0 HYBRID ULTIMATE
+# KONFIGURASI BOT TRADING V25.0 HYBRID ULTIMATE (ZERO-API SPOT XAUUSD)
 # =============================================================================
 
 bot:
-  symbol: "GC=F"
-  mt5_offset: 0.0
+  symbol: "XAUUSD"
+  mt5_offset: 0.0                # Offset manual jika broker kamu punya markup spread tambahan
   consensus_threshold: 60
   signal_cooldown_minutes: 30
 
@@ -13,22 +13,21 @@ telegram:
   chat_id: ""
 
 data_sources:
+  biquote:
+    enabled: true
+    url: "https://biquote.io/api/XAUUSD"
+    offset: 0.0                  # Murni Spot XAUUSD (Akursi tinggi)
+  tradingview:
+    enabled: true
+    url: "https://scanner.tradingview.com/forex/scan"
+    symbol: "OANDA:XAUUSD"
+    offset: 0.0                  # Spot XAUUSD OANDA
   yahoo:
     enabled: true
     symbol: "GC=F"
     period_m15: "5d"
     interval_m15: "15m"
-    offset: -46.50               # <--- Offset Futures ke Spot
-  gold_api:
-    enabled: true
-    url: "https://api.metals.live/v1/spot/gold"
-  coingecko:
-    enabled: true
-    url: "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
-  binance:
-    enabled: true
-    symbol: "PAXGUSDT"
-    url: "https://api.binance.com/api/v3/ticker/price"
+    offset: -34.30               # Offset penyesuaian Gold Futures (GC=F) ke Spot XAUUSD
 
 risk_management:
   atr_period: 14
