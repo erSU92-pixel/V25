@@ -1,7 +1,6 @@
-pytz>=2023.3
-requests>=2.31.0
-pandas>=2.0.0
-yfinance>=0.2.31
-websocket-client>=1.6.0
-matplotlib>=3.7.0
-PyYAML>=6.0
+requests
+pandas
+yfinance
+pytz
+pyyaml
+matplotlib
