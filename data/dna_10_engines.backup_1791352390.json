@@ -1,34 +1,34 @@
 {
   "engines": {
     "NADI": {
-      "weight": 1.6191
+      "weight": 1.5991
     },
     "PADI": {
-      "weight": 1.0773
+      "weight": 1.0573
     },
     "API": {
-      "weight": 1.026
+      "weight": 1.056
     },
     "ANGIN": {
-      "weight": 0.965
+      "weight": 0.995
     },
     "EMBER": {
-      "weight": 1.74
+      "weight": 1.72
     },
     "LUMPUR": {
-      "weight": 0.9701
+      "weight": 1.0001
     },
     "SEMUT": {
-      "weight": 1.44
+      "weight": 1.42
     },
     "WAYANG": {
-      "weight": 1.59
+      "weight": 1.57
     },
     "AKAR": {
-      "weight": 1.34
+      "weight": 1.32
     },
     "SAWAH": {
-      "weight": 1.7112
+      "weight": 1.6912
     }
   }
 }
