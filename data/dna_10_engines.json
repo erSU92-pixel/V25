@@ -4,19 +4,19 @@
       "weight": 2.0
     },
     "PADI": {
-      "weight": 1.2283
+      "weight": 1.2169
     },
     "API": {
-      "weight": 1.0485
+      "weight": 1.0461
     },
     "ANGIN": {
-      "weight": 0.868
+      "weight": 0.888
     },
     "EMBER": {
       "weight": 2.0
     },
     "LUMPUR": {
-      "weight": 0.9916
+      "weight": 0.992
     },
     "SEMUT": {
       "weight": 2.0
@@ -25,7 +25,7 @@
       "weight": 2.0
     },
     "AKAR": {
-      "weight": 1.85
+      "weight": 1.87
     },
     "SAWAH": {
       "weight": 2.0
